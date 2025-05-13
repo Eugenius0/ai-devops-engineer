@@ -1,15 +1,17 @@
 import asyncio
 import logging
 import os
-import ollama
 import uuid
 import subprocess
+
+from backend.llms.claude_llm import ClaudeLLM
 
 # Shared dictionary to manage pending approvals
 approval_channels = {}  # key: task_id, value: asyncio.Queue
 cancelled_tasks = set()  # Track task IDs that should be cancelled
 
-MODEL_NAME = "deepseek-coder-v2"
+llm = ClaudeLLM()
+
 
 async def run_agent_loop(task_id: str, repo_name: str, user_input: str):
     """
@@ -19,33 +21,35 @@ async def run_agent_loop(task_id: str, repo_name: str, user_input: str):
         {
             "role": "system",
             "content": (
-            "You are an AI DevOps engineer that follows the ReAct pattern: Thought → Action → Result.\n"
-            "For each step, respond using:\n"
-            "- Thought: Describe what you will do next.\n"
-            "- Action: Provide ONE shell command to execute (e.g., git, mkdir, nano, etc.).\n"
-            "- Result: Will be filled in after execution.\n\n"
-            "Important rules:\n"
-            "- Always start by cloning the GitHub/GitLab repository before anything else.\n"
-            "- Use the default username and repo name provided below.\n"
-            "- Use this command format exactly:\n"
-            "  Action: git clone https://github.com/eugenius0/<repo>.git unless its a gitlab repo then do https://gitlab.com/<repo>.git\n\n" #eugenius0 is the hardcoded username
-            "- Do NOT use `nano`. Instead, write files using shell redirection like echo or heredoc (cat <<EOF ...).\n"
-            "- Do NOT use `cd` commands. The system already executes each command in the correct working directory.\n"
-            "- Only provide raw shell commands in the Action line, no markdown or explanation.\n"
-            "- If a workflow file or pipeline or whatever affected file already exists, update that file instead of creating a new one.\n"
-            "After writing or modifying any file, make sure to run the following to save changes: 1. git add . 2. git commit -m your message 3. git push origin main."
-            "Do this at the end of the task to finalize the automation."
-            "- Wait for user approval after every Action before proceeding.\n"
-            "- End the process with: Final Answer: ... when done."
-        )
+                "You are an AI DevOps engineer that follows the ReAct pattern: Thought → Action → Result.\n"
+                "For each step, respond using:\n"
+                "- Thought: Describe what you will do next.\n"
+                "- Action: Provide ONE shell command to execute (e.g., git, mkdir, nano, etc.).\n"
+                "- Result: Will be filled in after execution.\n\n"
+                "Important rules:\n"
+                "- Always start by cloning the GitHub/GitLab repository before anything else.\n"
+                "- Use the default username and repo name provided below.\n"
+                "- Use this command format exactly:\n"
+                "  Action: git clone https://github.com/eugenius0/<repo>.git unless its a gitlab repo then do https://gitlab.com/<repo>.git\n\n"  # eugenius0 is the hardcoded username
+                "- Do NOT use `nano`. Instead, write files using shell redirection like echo or heredoc (cat <<EOF ...).\n"
+                "- Do NOT use `cd` commands. The system already executes each command in the correct working directory.\n"
+                "- Only provide raw shell commands in the Action line, no markdown or explanation.\n"
+                "- If a workflow file or pipeline or whatever affected file already exists, update that file instead of creating a new one.\n"
+                "After writing or modifying any file, make sure to run the following to save changes: 1. git add . 2. git commit -m your message 3. git push origin main."
+                "Do this at the end of the task to finalize the automation."
+                "- Wait for user approval after every Action before proceeding.\n"
+                "- End the process with: Final Answer: ... when done."
+            ),
         },
-        {"role": "user", "content": f"The task is: {user_input} for repository '{repo_name}'."}
+        {
+            "role": "user",
+            "content": f"The task is: {user_input} for repository '{repo_name}'.",
+        },
     ]
 
     while True:
         # Call the model for next reasoning step
-        response = ollama.chat(model=MODEL_NAME, messages=messages)
-        content = response["message"]["content"]
+        content = await llm.chat(messages)
         messages.append({"role": "assistant", "content": content})
 
         yield f"\n🧠 {content}"
@@ -85,7 +89,12 @@ async def run_agent_loop(task_id: str, repo_name: str, user_input: str):
                 yield f"\n📄 Result: {result}"
             else:
                 # ❗ New logic: inform the LLM about the rejection and continue the loop
-                messages.append({"role": "user", "content": "The proposed action was rejected by the user. Please try a different approach."})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "The proposed action was rejected by the user. Please try a different approach.",
+                    }
+                )
                 yield "\n⚠️ Action was rejected. Asking the AI for an alternative..."
 
 
@@ -93,7 +102,9 @@ def run_command(command, capture_output=True, cwd=None):
     """Executes a shell command with optional output capture and working directory."""
     try:
         if capture_output:
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=cwd)
+            result = subprocess.run(
+                command, shell=True, capture_output=True, text=True, cwd=cwd
+            )
             return result.returncode, result.stdout.strip(), result.stderr.strip()
         else:
             subprocess.run(command, shell=True, check=True, cwd=cwd)
@@ -133,13 +144,12 @@ def execute_action(command: str, repo_name: str) -> str:
         return out or f"✅ Successfully executed: {command}"
     else:
         return f"❌ Command failed with error:\n{err}"
-    
 
 
 running_process = None  # Legacy compatibility (can stay None)
 stop_execution = False  # Optional global flag for cancellation
 
+
 def cancel_execution():
     """Legacy cancellation hook for compatibility."""
     cancelled_tasks.update(approval_channels.keys())
-
