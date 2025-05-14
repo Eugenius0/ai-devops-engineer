@@ -31,7 +31,7 @@ async def run_agent_loop(task_id: str, repo_name: str, user_input: str):
                 "- Use the default username and repo name provided below.\n"
                 "- Use this command format exactly:\n"
                 "  Action: git clone https://github.com/eugenius0/<repo>.git unless its a gitlab repo then do https://gitlab.com/<repo>.git\n\n"  # eugenius0 is the hardcoded username
-                "- Do NOT use `nano`. Instead, write files using touch filename && echo '...' > filename.\n"
+                "- Do NOT use `nano`. Instead, write files using touch filename && echo '...' > filename.\n Never do cat << 'EOF' > filename.\n"
                 "- Do NOT use `cd` commands. The system already executes each command in the correct working directory.\n"
                 "- Only provide raw shell commands in the Action line, no markdown or explanation.\n"
                 "- If a workflow file or pipeline or whatever affected file already exists, update that file instead of creating a new one.\n"
